@@ -1,0 +1,263 @@
+# backend/main.py
+import os
+import sys
+from datetime import datetime
+from typing import Optional, List
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, HttpUrl, validator
+import uvicorn
+
+# Add the backend directory to the Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from core.logging_config import setup_logging
+from core.error_handler import (
+    PalmerException,
+    palmer_exception_handler,
+    general_exception_handler,
+    validation_exception_handler
+)
+from agents.competitive_orchestrator import CompetitiveOrchestrator
+
+# Setup logging
+logger = setup_logging()
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Palmer Intelligence API",
+    description="Advanced AI-powered website and competitive analysis platform",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Exception handlers
+app.add_exception_handler(PalmerException, palmer_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
+# Initialize the orchestrator
+orchestrator = CompetitiveOrchestrator()
+
+# Request/Response models
+class QuickScanRequest(BaseModel):
+    target_url: HttpUrl
+    
+    @validator('target_url')
+    def validate_url(cls, v):
+        url_str = str(v)
+        if not url_str.startswith(('http://', 'https://')):
+            raise ValueError('URL must start with http:// or https://')
+        return v
+
+class AnalysisRequest(BaseModel):
+    target_url: HttpUrl
+    competitors: Optional[List[HttpUrl]] = []
+    analysis_depth: Optional[str] = "comprehensive"
+    include_visual_analysis: Optional[bool] = False
+    
+    @validator('competitors')
+    def validate_competitors(cls, v):
+        if len(v) > 10:
+            raise ValueError('Maximum 10 competitors allowed')
+        return v
+    
+    @validator('analysis_depth')
+    def validate_depth(cls, v):
+        allowed_depths = ["quick", "standard", "comprehensive"]
+        if v not in allowed_depths:
+            raise ValueError(f'Analysis depth must be one of: {", ".join(allowed_depths)}')
+        return v
+
+class IndustryReportRequest(BaseModel):
+    industry: str
+    companies: Optional[List[HttpUrl]] = []
+    report_type: Optional[str] = "overview"
+    
+    @validator('report_type')
+    def validate_report_type(cls, v):
+        allowed_types = ["overview", "competitive", "trends", "comprehensive"]
+        if v not in allowed_types:
+            raise ValueError(f'Report type must be one of: {", ".join(allowed_types)}')
+        return v
+
+# Routes
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "Welcome to Palmer Intelligence API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "Palmer Intelligence API",
+        "version": "1.0.0",
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+@app.post("/api/v1/quick-scan")
+async def quick_scan(request: QuickScanRequest):
+    """
+    Perform a quick 30-60 second analysis of a website
+    """
+    try:
+        logger.info(f"Quick scan requested for: {request.target_url}")
+        
+        # Perform quick analysis
+        result = await orchestrator.quick_scan(str(request.target_url))
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "data": result,
+                "metadata": {
+                    "analysis_type": "quick_scan",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Quick scan failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/analyze")
+async def analyze(request: AnalysisRequest):
+    """
+    Perform comprehensive competitive analysis
+    """
+    try:
+        logger.info(f"Comprehensive analysis requested for: {request.target_url}")
+        logger.info(f"Competitors: {request.competitors}")
+        logger.info(f"Analysis depth: {request.analysis_depth}")
+        
+        # Convert URLs to strings
+        target = str(request.target_url)
+        competitors = [str(url) for url in request.competitors]
+        
+        # Perform analysis
+        result = await orchestrator.analyze(
+            target_url=target,
+            competitors=competitors,
+            analysis_depth=request.analysis_depth,
+            include_visual_analysis=request.include_visual_analysis
+        )
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "data": result,
+                "metadata": {
+                    "analysis_type": "comprehensive",
+                    "depth": request.analysis_depth,
+                    "competitor_count": len(competitors),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Comprehensive analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/industry-report")
+async def industry_report(request: IndustryReportRequest):
+    """
+    Generate an industry-wide competitive intelligence report
+    """
+    try:
+        logger.info(f"Industry report requested for: {request.industry}")
+        logger.info(f"Companies: {request.companies}")
+        logger.info(f"Report type: {request.report_type}")
+        
+        # Convert URLs to strings
+        companies = [str(url) for url in request.companies]
+        
+        # Generate report
+        result = await orchestrator.industry_report(
+            industry=request.industry,
+            companies=companies,
+            report_type=request.report_type
+        )
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "data": result,
+                "metadata": {
+                    "industry": request.industry,
+                    "report_type": request.report_type,
+                    "company_count": len(companies),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Industry report generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/status")
+async def status():
+    """Get API status and statistics"""
+    return {
+        "status": "operational",
+        "version": "1.0.0",
+        "endpoints": {
+            "quick_scan": "/api/v1/quick-scan",
+            "analyze": "/api/v1/analyze",
+            "industry_report": "/api/v1/industry-report"
+        },
+        "capabilities": [
+            "Website Analysis",
+            "Competitive Intelligence",
+            "UX Evaluation",
+            "Technology Detection",
+            "Content Strategy Assessment",
+            "Industry Benchmarking"
+        ]
+    }
+
+# Error handling middleware
+@app.middleware("http")
+async def catch_exceptions_middleware(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        logger.error(f"Unhandled exception: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": "An unexpected error occurred",
+                "detail": str(e) if app.debug else "Internal server error"
+            }
+        )
+
+# Run the application
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
