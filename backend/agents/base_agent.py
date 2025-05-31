@@ -1,38 +1,46 @@
-"""Base Agent with Anthropic Integration"""
-from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
+from anthropic import Anthropic
 import os
-import logging
-from anthropic import AsyncAnthropic
-from dotenv import load_dotenv
+from datetime import datetime
+import json
 
-load_dotenv()
-logger = logging.getLogger(__name__)
-
-class BaseAgent(ABC):
-    """Base class for all Palmer Intelligence agents"""
+class BaseAgent:
+    def __init__(self):
+        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.model = "claude-3-opus-20240229"
+        self.agent_name = self.__class__.__name__
+        self.created_at = datetime.utcnow()
     
-    def __init__(self, name: str, role: str):
-        self.name = name
-        self.role = role
-        self.client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        
-    @abstractmethod
-    async def analyze(self, data: Any) -> Dict[str, Any]:
-        """Analyze data - must be implemented by subclasses"""
-        pass
-        
-    async def think(self, prompt: str, temperature: float = 0.7) -> str:
-        """Use Claude for intelligent analysis"""
+    async def analyze(self, *args, **kwargs) -> Dict[str, Any]:
+        raise NotImplementedError("Each agent must implement analyze method")
+    
+    async def _call_claude(self, system_prompt: str, user_prompt: str, 
+                          max_tokens: int = 4000) -> str:
+        """Call Claude API with error handling"""
         try:
-            response = await self.client.messages.create(
-                model="claude-3-opus-20240229",
-                max_tokens=4000,
-                temperature=temperature,
-                system=f"You are {self.name}, {self.role}",
-                messages=[{"role": "user", "content": prompt}]
+            message = self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                temperature=0.7,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_prompt}
+                ]
             )
-            return response.content[0].text
+            return message.content[0].text
         except Exception as e:
-            logger.error(f"Error in {self.name}: {str(e)}")
+            print(f"Error calling Claude API: {e}")
             raise
+    
+    def _parse_json_response(self, response: str) -> Dict[str, Any]:
+        """Safely parse JSON from Claude response"""
+        try:
+            # Try to extract JSON from response
+            start_idx = response.find('{')
+            end_idx = response.rfind('}') + 1
+            if start_idx != -1 and end_idx > start_idx:
+                json_str = response[start_idx:end_idx]
+                return json.loads(json_str)
+            return {"raw_response": response}
+        except json.JSONDecodeError:
+            return {"raw_response": response}
