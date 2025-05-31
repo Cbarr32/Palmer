@@ -1,0 +1,10 @@
+#!/bin/bash
+echo "=== Palmer Intelligence API Status ==="
+echo "Repository: https://github.com/Cbarr32/Palmer"
+echo "API Status: Run 'python start_api.py' to start"
+echo "Docs: http://localhost:8000/docs"
+echo ""
+echo "Quick Test:"
+echo "curl -X POST http://localhost:8000/api/v1/quick-scan -H 'Content-Type: application/json' -d '{\"target_url\": \"example.com\"}'"
+echo ""
+echo "For full checkpoint, see PROJECT_CHECKPOINT.md"
